@@ -1,97 +1,100 @@
-# OSTrack on a 4 GB laptop: headless CPU demo
+# OSTrack 推理环境配置与运行记录
 
-[中文说明](#中文说明) · [English](#english)
+本仓库记录在 RTX 3050 Laptop（4 GB 显存）上以 CPU 运行 OSTrack 推理的完整过程：环境配置、与官方脚本的差异、运行结果与限制。
 
----
+OSTrack 是 ECCV 2022 提出的单目标跟踪方法，将模板与搜索区拼接为一个序列送入 ViT，用自注意力同时完成特征提取与关系建模，并使用候选早消除（ECE）模块降低推理计算量。
 
-## 中文说明
-
-> 在只有 **RTX 3050 Laptop（4 GB 显存）** 的笔记本上，把 [OSTrack](https://github.com/botaoye/OSTrack) 的**推理链路**跑通：
-> 不开窗口、不装 CUDA、纯 CPU 出框。
-
-![demo](results/demo.gif)
-
-**这不是复现，是打通环境。** 没有 ground truth，就没有 PR/SR，也就没有「和论文差多少」这回事。评测和训练等服务器。
-
-### 实测结果
+## 1. 环境
 
 | 项 | 值 |
 |---|---|
-| 模型 | OSTrack ViT-B，**384 输入**（search 384 / template 192） |
-| 权重 | ModelScope `damo/cv_vitb_video-single-object-tracking_ostrack`，371,408,049 字节 |
-| 设备 | CPU（torch 1.13.1+cpu） |
-| 视频 | OpenCV 样例 `vtest.avi`，768×576，10 fps |
-| 首帧初始化 | 8 ms |
-| 30 帧 | 22.6 s → **1.33 FPS**（同一台机器另一次 17.1 s / 1.75 FPS） |
-| 首帧框 | `[633, 240, 49, 85]` |
-| 末帧框 | `[378, 178, 32, 87]` |
+| 操作系统 | Windows（PowerShell 7） |
+| Python | 3.8.6（独立 venv） |
+| PyTorch | 1.13.1+cpu |
+| torchvision | 0.14.1+cpu |
+| timm | 0.5.4 |
+| OpenCV | opencv-python-headless 5.0.0 |
+| NumPy | 1.24.4 |
+| GPU | NVIDIA RTX 3050 Laptop，4096 MiB，驱动 610.62（本次未使用） |
+| 推理设备 | CPU |
 
-> 论文里的速度是单卡 RTX2080Ti 上的数字。**这里的 FPS 不能和论文比**，也不构成任何性能结论。
+## 2. 模型与权重
 
-### 为什么需要这个仓库
+| 项 | 值 |
+|---|---|
+| 代码 | [botaoye/OSTrack](https://github.com/botaoye/OSTrack)，commit `33b5e12` |
+| 配置 | `experiments/ostrack/vitb_384_mae_ce_32x4_ep300.yaml` |
+| 输入尺寸 | template 192×192，search 384×384 |
+| 权重来源 | [ModelScope](https://www.modelscope.cn/models/damo/cv_vitb_video-single-object-tracking_ostrack) `pytorch_model.bin` |
+| 权重大小 | 371,408,049 字节，文件内含 `net` 字段的完整 checkpoint |
+| 存放位置 | `output/checkpoints/train/ostrack/<config>/OSTrack_ep0300.pth.tar` |
 
-官方代码有四个坑，任何一个都能让人卡半天：
+权重版本必须与配置对应：384 版本的 `backbone.pos_embed_z` / `pos_embed_x` 分别为 144 / 576 个 token，256 版本为 64 / 256，两者不能互换。
 
-1. **官方 demo 是交互式的**。`tracking/video_demo.py` 里 `cv2.namedWindow` + `imshow` + `waitKey`，没给框还要人手画。远程终端 / 无桌面环境直接卡死。
-2. **`.cuda()` 写死**。`lib/test/tracker/ostrack.py` 里 `network.cuda()`、`hann2d(...).cuda()`，CPU 机器当场报错。
-3. **权重在 Google Drive**。国内基本下不动，且 384/256 两个版本的权重**不能混用**（`pos_embed` 形状不同）。
-4. **官方路径生成脚本在 Windows 上是坏的**。`create_default_local_file.py` 把路径拼进单引号字符串，`\u`、`\t` 被当成转义符，生成的文件甚至 import 不了。
+## 3. 实现方式
 
-这个仓库把四条都绕过去了，并且把踩过的坑写进了 [docs/pitfalls.md](docs/pitfalls.md)。
+官方 `tracking/video_demo.py` 依赖 cv2 窗口交互，且在 `lib/test/tracker/ostrack.py` 中直接调用 `.cuda()`，无法在无窗口、无 GPU 的环境运行。本仓库做了以下调整：
 
-### 快速开始（Windows / CPU）
+1. **无窗口运行**：`run_demo_cpu.py` 从命令行接收初始框，逐帧读取视频、推理、绘制预测框并写出 mp4，不调用任何 cv2 窗口函数。
+2. **CPU 运行**：在导入跟踪器前将 `Tensor.cuda` 与 `Module.cuda` 替换为空操作，模型与输入保持在 CPU 上。
+3. **依赖占位**：`jpeg4py` 与 `visdom` 在 `lib` 的 import 阶段被引用，但不参与推理流程；`stubs/` 下提供占位模块，避免安装不可用的依赖。
+4. **配置文件生成**：官方 `create_default_local_file.py` 将路径写入单引号字符串，Windows 路径中的 `\u`、`\t` 会被解析为转义符；`scripts/make_local_config.py` 改用 raw string 生成 `lib/test/evaluation/local.py`。
+5. **权重获取**：官方权重位于 Google Drive；`scripts/download_weights.py` 从 ModelScope 下载并放置到配置对应的目录。
+
+## 4. 运行结果
+
+测试视频为 OpenCV 样例 `samples/data/vtest.avi`（768×576，10 fps，795 帧），初始框 `[638, 236, 50, 86]`。
+
+| 运行 | 帧数 | 耗时 | 平均 FPS | 初始化 | 首帧框 | 末帧框 |
+|---|---|---|---|---|---|---|
+| 30 帧 | 30 | 22.6 s | 1.33 | 8 ms | `[633, 240, 49, 85]` | `[378, 178, 32, 87]` |
+| 60 帧 | 60 | 38.3 s | 1.57 | 16 ms | `[633, 240, 49, 85]` | `[365, 168, 22, 69]` |
+
+原始数据见 `results/metrics.json` 与 `results/metrics_60f.json`。
+
+30 帧运行的逐帧结果：
+
+![demo](results/demo.gif)
+
+首帧与末帧（30 帧运行）：
+
+<p>
+<img src="results/frame_000.png" width="380">
+<img src="results/frame_029.png" width="380">
+</p>
+
+60 帧运行的末帧框为 22×69（首帧 49×85），位置已偏离目标主体。本次未对该段做误差量化，也未分析原因。
+
+## 5. 限制
+
+- 未使用 ground truth，未计算 PR / SR，未做任何 benchmark 评测。
+- CPU 推理速度与模型性能无关，不能与论文中 RTX2080Ti 的数字比较。
+- 仅验证推理链路；训练与评测需在 GPU 服务器上进行。
+- 单次运行、单段视频，结果不具备统计意义。
+
+## 6. 复现
 
 ```powershell
 git clone https://github.com/botaoye/OSTrack.git ..\OSTrack
-git clone <this-repo> ostrack-demo
 cd ostrack-demo
 
-# 1. 建环境（Python 3.8）
 powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
-
-# 2. 修 local.py（官方脚本在 Windows 上会生成坏路径）
 .\.venv\Scripts\python.exe scripts\make_local_config.py --ostrack ..\OSTrack
-
-# 3. 下载权重（约 371 MB，走 ModelScope，国内直连）
 .\.venv\Scripts\python.exe scripts\download_weights.py --ostrack ..\OSTrack
-
-# 4. 样例视频（OpenCV 示例，约 8 MB）
 .\.venv\Scripts\python.exe scripts\get_sample_video.py --out data\vtest.avi
 
-# 5. 跑
 .\.venv\Scripts\python.exe run_demo_cpu.py `
     --ostrack ..\OSTrack --video data\vtest.avi --box 638 236 50 86 `
     --out results\demo_30f.mp4 --max-frames 30 --metrics results\metrics.json
 ```
 
-### 一个真实观察：跑到 60 帧，框会漂
+环境问题与处理方式见 [docs/pitfalls.md](docs/pitfalls.md)。
 
-第 30 帧之前目标一直跟得住；把 `--max-frames` 提到 60 之后，目标走进人群、又被灯柱挡了一下，框开始缩成一条贴在人边上。
-
-这不是 bug，是这类单流跟踪器的典型失败模式：**没有模板更新机制，遮挡之后模板还是第一帧的那个**。也正好是「长时 / 遮挡 / 模板更新」这类工作的下手点。
-
-### 引用
+## 7. 引用与许可
 
 - 论文：Ye et al., *Joint Feature Learning and Relation Modeling for Tracking: A One-Stream Framework*, ECCV 2022. [arXiv:2203.11991](https://arxiv.org/abs/2203.11991)
-- 代码：[botaoye/OSTrack](https://github.com/botaoye/OSTrack)（MIT）
-- 权重：[ModelScope `damo/cv_vitb_video-single-object-tracking_ostrack`](https://www.modelscope.cn/models/damo/cv_vitb_video-single-object-tracking_ostrack)
-- 样例视频：OpenCV `samples/data/vtest.avi`
+- 代码：[botaoye/OSTrack](https://github.com/botaoye/OSTrack)，MIT License，Copyright (c) 2022 Botao Ye
+- 权重：ModelScope `damo/cv_vitb_video-single-object-tracking_ostrack`
+- 测试视频：OpenCV `samples/data/vtest.avi`
 
-### 许可
-
-本仓库脚本 MIT，见 [LICENSE](LICENSE)。OSTrack 本身是 MIT（Copyright (c) 2022 Botao Ye），本仓库不包含其源码。样例视频版权归 OpenCV 所有。
-
----
-
-## English
-
-A minimal headless CPU runner for [OSTrack](https://github.com/botaoye/OSTrack) (ECCV 2022), tested on a 4 GB RTX 3050 Laptop.
-
-It exists because the official demo requires an interactive cv2 window, hard-codes `.cuda()`, ships weights only on Google Drive, and its path-config generator produces broken `local.py` files on Windows.
-
-**Scope:** environment bring-up only. No ground truth, no PR/SR, no benchmark numbers. 1.33 FPS on CPU is not comparable to the paper's RTX2080Ti figures.
-
-```powershell
-python run_demo_cpu.py --ostrack ..\OSTrack --video data\vtest.avi `
-    --box 638 236 50 86 --out results\demo_30f.mp4 --max-frames 30
-```
+本仓库脚本采用 MIT License，见 [LICENSE](LICENSE)；不包含 OSTrack 源码与模型权重。

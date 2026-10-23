@@ -1,0 +1,28 @@
+{
+  "config": "vitb_384_mae_ce_32x4_ep300",
+  "device": "cpu",
+  "video": "vtest.avi",
+  "init_box": [
+    638.0,
+    236.0,
+    50.0,
+    86.0
+  ],
+  "first_box": [
+    633,
+    240,
+    49,
+    85
+  ],
+  "last_box": [
+    378,
+    178,
+    32,
+    87
+  ],
+  "frames": 30,
+  "init_ms": 8.0,
+  "elapsed_s": 22.6,
+  "fps": 1.33,
+  "output": "demo_30f.mp4"
+}

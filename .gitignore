@@ -1,0 +1,16 @@
+# Python
+.venv/
+.venv-*/
+__pycache__/
+*.pyc
+
+# OSTrack checkout / 权重 / 数据集：都不进仓库
+OSTrack/
+output/
+data/
+*.pth
+*.pth.tar
+
+# 本地临时文件
+*.log
+tmp/

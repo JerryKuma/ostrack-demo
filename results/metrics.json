@@ -21,8 +21,8 @@
     87
   ],
   "frames": 30,
-  "init_ms": 8.0,
-  "elapsed_s": 22.6,
-  "fps": 1.33,
+  "init_ms": 6.0,
+  "elapsed_s": 18.9,
+  "fps": 1.59,
   "output": "demo_30f.mp4"
 }

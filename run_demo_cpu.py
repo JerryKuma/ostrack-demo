@@ -44,6 +44,7 @@ def parse_args():
     p.add_argument('--max-frames', type=int, default=30, help='0 = whole video')
     p.add_argument('--device', default='cpu', choices=['cpu', 'cuda'])
     p.add_argument('--metrics', default='', help='optional path to write a JSON summary')
+    p.add_argument('--save-boxes', default='', help='optional path to write per-frame boxes as CSV')
     return p.parse_args()
 
 
@@ -128,6 +129,11 @@ def main():
     if args.metrics:
         with open(args.metrics, 'w', encoding='utf-8') as f:
             json.dump(summary, f, ensure_ascii=False, indent=2)
+    if args.save_boxes:
+        with open(args.save_boxes, 'w', encoding='utf-8', newline='\n') as f:
+            f.write('frame,x,y,w,h\n')
+            for i, bb in enumerate(boxes):
+                f.write('%d,%d,%d,%d,%d\n' % (i, bb[0], bb[1], bb[2], bb[3]))
     return 0
 
 
